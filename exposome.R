@@ -1,3 +1,9 @@
+# Optional generic preliminaries:
+graphics.off() # This closes all of R's graphics windows.
+rm(list=ls())  # Careful! This clears all of R's memory!
+#------------------------------------------------------------------------------- 
+
+
 # Cargar librerías necesarias
 library(readxl)
 library(dplyr)
@@ -8,26 +14,16 @@ library(reshape2)
 library(ggplot2)
 library(psych)
 library(GPArotation)
+library(qgraph)
 
+###Adjust Path###
+setwd("~/GitHub/exposome/data")
 ####DATA PREPROCESSING####
 
 # 1. READ Excel
-df <- read_excel("risk-factors-of-psychosis.xlsx")
+df <- read_excel("risk-factors-of-psychosis_analysis.xlsx")
 
-# 2. CLEAN "Cannabis use":
-# Extraer solo el número antes del paréntesis
-df <- df %>%
-  mutate(`Cannabis use` = str_extract(`Cannabis use`, "^[0-9]+\\.?[0-9]*")) %>%
-  mutate(`Cannabis use` = as.numeric(`Cannabis use`))
-
-# 3. VERIFY
-head(df$`Cannabis use`)
-
-# 4. (Opcional) SAVE THE NW BASE
-# write_xlsx(df, "risk-factors-of-psychosis_limpio.xlsx")
-
-
-# 1. SELECT JUST NUMBER COL
+#SELECT JUST NUMBER COL
 numeric_vars <- df %>%
   select(-Location) %>% # EXCEPT LOCATION
   select(where(is.numeric))
@@ -41,16 +37,15 @@ df_z <- bind_cols(Location = df$Location, numeric_vars_z)
 # 4. COR MATRIX
 cor_matrix <- cor(numeric_vars_z, use = "pairwise.complete.obs")
 
-# 5. Guardar resultados (opcional)
-# library(writexl)
+# 5. save results
 # write_xlsx(df_z, "risk-factors-of-psychosis_zscores.xlsx")
 # write_xlsx(as.data.frame(cor_matrix), "correlation_matrix.xlsx")
 
-# 6. Ver los primeros valores
+# 6. see headers
 head(df_z)
 head(cor_matrix)
 print (cor_matrix)
-View(cor_matrix)
+#View(cor_matrix)
 
 
 #####VISUALIZATION COR MATRIX###########
@@ -70,7 +65,7 @@ ggplot(cor_melt, aes(Var1, Var2, fill = value)) +
   labs(title = "Matriz de correlaciones (heatmap)")
 
 
-# 1. Convertir matriz de correlaciones a formato largo
+# Convertir matriz de correlaciones a formato largo
 
 cor_long <- melt(cor_matrix, varnames = c("Var1", "Var2"), value.name = "Correlation")
 
@@ -95,8 +90,6 @@ if (nrow(cor_strong) > 0) {
 }
 
 
-
-
 # Solo selecciona las variables con al menos una correlación fuerte
 strong_vars <- unique(c(as.character(cor_strong$Var1), as.character(cor_strong$Var2)))
 sub_cor_matrix <- cor_matrix[strong_vars, strong_vars]
@@ -104,7 +97,8 @@ sub_cor_matrix <- cor_matrix[strong_vars, strong_vars]
 # Dibuja el heatmap autoordenado por agrupamiento
 corrplot(sub_cor_matrix, method = "color", order = "hclust", addCoef.col = "black", 
          tl.cex = 0.9, number.cex = 0.8, tl.col = "black", mar = c(0,0,2,0))
-title("Correlaciones fuertes (>|0.7|) ordenadas", line = 1)
+
+title("Strong Correlations (>|0.7|)", line = 1)
 
 
 ###########AFE########
@@ -112,9 +106,10 @@ title("Correlaciones fuertes (>|0.7|) ordenadas", line = 1)
 na_percent <- colMeans(is.na(numeric_vars_z))
 print(na_percent)
 
-# 2. Elimina variables con >40% de NA o sin varianza
-vars_ok <- numeric_vars_z[, na_percent < 0.2]
+# 2. delete variables with >40% de NA or without variance
+vars_ok <- numeric_vars_z[, na_percent < 0.45]
 vars_ok <- vars_ok[, apply(vars_ok, 2, function(x) length(unique(na.omit(x))) > 1)]
+
 
 # 3. KMO y Bartlett con estas variables
 KMO(vars_ok)
@@ -125,10 +120,63 @@ cortest.bartlett(vars_ok)
 fa.parallel(vars_ok, fa = "fa")
 
 fa_res <- fa(vars_ok, nfactors = 5, rotate = "varimax", fm = "ml")
-print(fa_res$loadings, cutoff = 0.3)  # Solo muestra cargas > 0.3
+print(fa_res$loadings, cutoff = 0.2)  # Solo muestra cargas > 0.3
 
 # Visualización diagrama de factores
 fa.diagram(fa_res)
+
+###VISUALIZACION PRO###
+# 1. Convierte primero el objeto a matriz numérica pura
+loadings_mat <- unclass(fa_res$loadings)
+
+# 2. Ahora sí a data.frame
+loadings_df <- as.data.frame(loadings_mat)
+
+# 3. Añade la columna de nombres de variables
+loadings_df$Variable <- rownames(loadings_df)
+
+# 4. Formatea a formato largo para ggplot
+
+loadings_melt <- melt(loadings_df, id.vars = "Variable")
+
+# 5. Haz el heatmap
+
+ggplot(loadings_melt, aes(x = variable, y = Variable, fill = value)) +
+  geom_tile() +
+  # Agrega el valor numérico redondeado
+  geom_text(aes(label = round(value, 2)), size = 4) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Heatmap de cargas factoriales", x = "Factor", y = "Variable") +
+  theme_minimal(base_size = 12)
+
+# 1. Encuentra el factor dominante para cada variable
+loadings_mat <- unclass(fa_res$loadings)
+loadings_df <- as.data.frame(loadings_mat)
+loadings_df$Variable <- rownames(loadings_df)
+
+# Identifica el factor principal (de mayor carga absoluta) para cada variable
+loadings_df$MainFactor <- colnames(loadings_df)[apply(abs(loadings_mat), 1, which.max)]
+
+# 2. Ordena las variables primero por factor principal, luego por magnitud de la carga
+loadings_df <- loadings_df[order(loadings_df$MainFactor, -apply(abs(loadings_mat), 1, max)), ]
+
+# 3. Convierte Variable a factor para que ggplot respete ese orden
+loadings_df$Variable <- factor(loadings_df$Variable, levels = loadings_df$Variable)
+
+# 4. Formatea a formato largo
+
+loadings_melt <- melt(loadings_df, id.vars = c("Variable", "MainFactor"))
+
+# 5. Graficar agrupando por orden
+
+ggplot(loadings_melt, aes(x = variable, y = Variable, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = ifelse(abs(value) > 0.3, round(value, 2), "")), size = 4) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Heatmap de cargas factoriales (agrupado por factor)", x = "Factor", y = "Variable") +
+  theme_minimal(base_size = 12)
+
+
 
 # (Opcional) Exporta las cargas
 # write.csv(as.data.frame(fa_res$loadings[]), "factor_loadings.csv")
