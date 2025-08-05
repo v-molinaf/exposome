@@ -1,0 +1,215 @@
+# Cargar librerías necesarias
+library(readxl)
+library(dplyr)
+library(stringr)
+library(writexl)
+library(corrplot)
+library(reshape2)
+library(ggplot2)
+library(psych)
+library(GPArotation)
+
+####DATA PREPROCESSING####
+
+# 1. READ Excel
+df <- read_excel("risk-factors-of-psychosis.xlsx")
+
+# 2. CLEAN "Cannabis use":
+# Extraer solo el número antes del paréntesis
+df <- df %>%
+  mutate(`Cannabis use` = str_extract(`Cannabis use`, "^[0-9]+\\.?[0-9]*")) %>%
+  mutate(`Cannabis use` = as.numeric(`Cannabis use`))
+
+# 3. VERIFY
+head(df$`Cannabis use`)
+
+# 4. (Opcional) SAVE THE NW BASE
+# write_xlsx(df, "risk-factors-of-psychosis_limpio.xlsx")
+
+
+# 1. SELECT JUST NUMBER COL
+numeric_vars <- df %>%
+  select(-Location) %>% # EXCEPT LOCATION
+  select(where(is.numeric))
+
+# 2. STANDARIZE TO Z SCORE
+numeric_vars_z <- as.data.frame(scale(numeric_vars))
+
+# 3. MERGE LOCATION
+df_z <- bind_cols(Location = df$Location, numeric_vars_z)
+
+# 4. COR MATRIX
+cor_matrix <- cor(numeric_vars_z, use = "pairwise.complete.obs")
+
+# 5. Guardar resultados (opcional)
+# library(writexl)
+# write_xlsx(df_z, "risk-factors-of-psychosis_zscores.xlsx")
+# write_xlsx(as.data.frame(cor_matrix), "correlation_matrix.xlsx")
+
+# 6. Ver los primeros valores
+head(df_z)
+head(cor_matrix)
+print (cor_matrix)
+View(cor_matrix)
+
+
+#####VISUALIZATION COR MATRIX###########
+
+# Visualiza la matriz de correlaciones como heatmap
+corrplot(cor_matrix, method = "color", tl.cex = 0.7, number.cex = 0.7,
+         tl.col = "black", addCoef.col = "black")
+
+
+cor_melt <- melt(cor_matrix)
+ggplot(cor_melt, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Matriz de correlaciones (heatmap)")
+
+
+# 1. Convertir matriz de correlaciones a formato largo
+
+cor_long <- melt(cor_matrix, varnames = c("Var1", "Var2"), value.name = "Correlation")
+
+# 2. Filtrar correlaciones fuertes (>|0.7|) y quitar la diagonal
+cor_strong <- cor_long %>%
+  filter(Var1 != Var2, abs(Correlation) > 0.7)
+
+# 3. Ver los pares de variables con correlación fuerte
+print(cor_strong)
+
+# 4. Opcional: Graficar sólo las correlaciones fuertes como heatmap
+if (nrow(cor_strong) > 0) {
+  ggplot(cor_strong, aes(Var1, Var2, fill = Correlation)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                         midpoint = 0, limit = c(-1,1)) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Correlaciones fuertes (>|0.7|)")
+} else {
+  print("No se encontraron correlaciones fuertes (>|0.7|) entre las variables.")
+}
+
+
+
+
+# Solo selecciona las variables con al menos una correlación fuerte
+strong_vars <- unique(c(as.character(cor_strong$Var1), as.character(cor_strong$Var2)))
+sub_cor_matrix <- cor_matrix[strong_vars, strong_vars]
+
+# Dibuja el heatmap autoordenado por agrupamiento
+corrplot(sub_cor_matrix, method = "color", order = "hclust", addCoef.col = "black", 
+         tl.cex = 0.9, number.cex = 0.8, tl.col = "black", mar = c(0,0,2,0))
+title("Correlaciones fuertes (>|0.7|) ordenadas", line = 1)
+
+
+###########AFE########
+# 1. % OF NA FOR col
+na_percent <- colMeans(is.na(numeric_vars_z))
+print(na_percent)
+
+# 2. Elimina variables con >40% de NA o sin varianza
+vars_ok <- numeric_vars_z[, na_percent < 0.2]
+vars_ok <- vars_ok[, apply(vars_ok, 2, function(x) length(unique(na.omit(x))) > 1)]
+
+# 3. KMO y Bartlett con estas variables
+KMO(vars_ok)
+cortest.bartlett(vars_ok)
+
+
+# Esto te mostrará el scree plot y sugerirá número de factores
+fa.parallel(vars_ok, fa = "fa")
+
+fa_res <- fa(vars_ok, nfactors = 5, rotate = "varimax", fm = "ml")
+print(fa_res$loadings, cutoff = 0.3)  # Solo muestra cargas > 0.3
+
+# Visualización diagrama de factores
+fa.diagram(fa_res)
+
+# (Opcional) Exporta las cargas
+# write.csv(as.data.frame(fa_res$loadings[]), "factor_loadings.csv")
+
+# Extrae las cargas y ordénalas como data.frame
+loadings_mat <- as.data.frame(unclass(fa_res$loadings))
+loadings_mat$Variable <- rownames(loadings_mat)
+loadings_long <- melt(loadings_mat, id.vars = "Variable", variable.name = "Factor", value.name = "Loading")
+
+# Haz el heatmap (valores >0.3 o <-0.3 resaltan)
+ggplot(loadings_long, aes(Factor, Variable, fill = Loading)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1), name = "Carga") +
+  theme_minimal(base_size = 12) +
+  labs(title = "Heatmap de cargas factoriales",
+       x = "Factor", y = "Variable") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Extraer matriz de cargas
+loadings_mat <- as.data.frame(unclass(fa_res$loadings))
+
+# Calcular distancia y clustering jerárquico
+dist_vars <- dist(loadings_mat)
+clust_vars <- hclust(dist_vars)
+
+# Graficar el dendrograma
+plot(clust_vars, 
+     main = "Dendrograma de agrupamiento de variables (por cargas factoriales)", 
+     xlab = "", 
+     sub = "", 
+     cex = 0.9)
+
+######CLUSTER ANALYSIS
+
+# 1. Extrae los scores factoriales
+scores <- as.data.frame(fa_res$scores)
+scores$Location <- df$Location  # Añade la columna con nombres de país
+
+# 2. Ajusta solo países sin NA en los scores
+scores_clean <- na.omit(scores)
+
+# 3. Cluster jerárquico
+row.names(scores_clean) <- scores_clean$Location
+dist_countries <- dist(scores_clean[, 1:ncol(fa_res$scores)])
+clust_countries <- hclust(dist_countries)
+
+# 4. Dendrograma de países
+plot(clust_countries, 
+     main = "Dendrograma de países según scores factoriales", 
+     xlab = "", sub = "", cex = 0.8)
+
+
+
+# 1. K-means clustering (elige 3 clusters como ejemplo)
+set.seed(123456)
+km <- kmeans(scores_clean[,1:2], centers = 6)
+scores_clean$Cluster <- as.factor(km$cluster)
+
+# 2. Plot 2D
+
+ggplot(scores_clean, aes(x = ML1, y = ML2, color = Cluster, label = Location)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 1.1, vjust = 0.5, size = 2.7) +
+  labs(title = "Agrupamiento de países según factores",
+       x = "ML1", y = "ML22") +
+  theme_minimal()
+
+
+scores_melt$Score <- as.numeric(scores_melt$Score)
+
+
+# Convierte a formato largo
+scores_melt <- melt(scores_clean, id.vars = "Location", variable.name = "Factor", value.name = "Score")
+
+ggplot(scores_melt, aes(x = Factor, y = Location, fill = Score)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Heatmap: scores factoriales por país") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
+
+
+

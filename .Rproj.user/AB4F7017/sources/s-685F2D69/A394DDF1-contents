@@ -1,0 +1,105 @@
+
+
+install.packages("ggplot2")
+install.packages("reshape2")
+library(ggplot2)
+library(reshape2)
+
+# Datos
+data_graf <- data.frame(
+  Condicion = c("A", "S"),
+  RT_mean = c(554.87, 631.67),
+  RT_std = c(122.18, 131.74),
+  ACCU_mean = c(0.80, 0.92),
+  ACCU_std = c(0.20, 0.06)
+)
+
+# Convertir datos a formato largo
+data_long <- melt(data_graf, id.vars = "Condicion", 
+                  measure.vars = c("RT_mean", "ACCU_mean"), 
+                  variable.name = "Medida", value.name = "Valor")
+
+# Añadir las barras de error en el mismo formato
+data_long$Error <- c(data_graf$RT_std, data_graf$ACCU_std)
+
+ggplot(data_long, aes(x = Medida, y = ifelse(grepl("ACCU", Medida), Valor * 1000, Valor), fill = Condicion)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_errorbar(aes(ymin = ifelse(grepl("ACCU", Medida), (Valor - Error) * 1000, Valor - Error), 
+                    ymax = ifelse(grepl("ACCU", Medida), (Valor + Error) * 1000, Valor + Error)), 
+                position = position_dodge(0.7), width = 0.25) +
+  scale_y_continuous(
+    name = "RT (ms)", limits = c(0, 1000), 
+    sec.axis = sec_axis(~./1000, name = "ACCU")) +  # Dividiendo el eje secundario para que corresponda a ACCU (0-1)
+  labs(x = "Medida", title = "Comparación de RT y ACCU entre condiciones A y S") +
+  theme_minimal() +
+  scale_fill_manual(values = c("skyblue", "lightgreen"))
+
+# Datos para estímulos congruentes
+data_congruente <- data.frame(
+  Condicion = c("A", "S"),
+  RT_mean = c(466.190, 506.369),
+  RT_std = c(86.890, 107.491),
+  ACCU_mean = c(0.983, 0.985),
+  ACCU_std = c(0.032, 0.019)
+)
+
+# Convertir datos a formato largo
+data_congruente_long <- melt(data_congruente, id.vars = "Condicion", 
+                             measure.vars = c("RT_mean", "ACCU_mean"), 
+                             variable.name = "Medida", value.name = "Valor")
+
+# Añadir las barras de error en el mismo formato
+data_congruente_long$Error <- c(data_congruente$RT_std, data_congruente$ACCU_std)
+
+# Crear gráfico para congruentes
+ggplot(data_congruente_long, aes(x = Medida, y = ifelse(grepl("ACCU", Medida), Valor * 1000, Valor), fill = Condicion)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  
+  # Barra de error
+  geom_errorbar(aes(ymin = ifelse(grepl("ACCU", Medida), (Valor - Error) * 1000, Valor - Error), 
+                    ymax = ifelse(grepl("ACCU", Medida), (Valor + Error) * 1000, Valor + Error)), 
+                position = position_dodge(0.7), width = 0.25) +
+  
+  # Ajustar límites del eje izquierdo a 1200 y eje derecho a 1.2
+  scale_y_continuous(
+    name = "RT (ms)", limits = c(0, 1200), 
+    sec.axis = sec_axis(~./1000, name = "ACCU", breaks = seq(0, 1.2, 0.2))) +  # Ajuste del eje secundario
+  
+  labs(x = "Medida", title = "Congruentes: Comparación de RT y ACCU entre condiciones A y S") +
+  theme_minimal() +
+  scale_fill_manual(values = c("skyblue", "lightgreen"))
+
+
+# Datos para estímulos incongruentes
+data_incongruente <- data.frame(
+  Condicion = c("A", "S"),
+  RT_mean = c(644.922, 755.233),
+  RT_std = c(168.993, 162.923),
+  ACCU_mean = c(0.622, 0.848),
+  ACCU_std = c(0.382, 0.122)
+)
+
+# Convertir datos a formato largo
+data_incongruente_long <- melt(data_incongruente, id.vars = "Condicion", 
+                               measure.vars = c("RT_mean", "ACCU_mean"), 
+                               variable.name = "Medida", value.name = "Valor")
+
+# Añadir las barras de error en el mismo formato
+data_incongruente_long$Error <- c(data_incongruente$RT_std, data_incongruente$ACCU_std)
+
+ggplot(data_incongruente_long, aes(x = Medida, y = ifelse(grepl("ACCU", Medida), Valor * 1000, Valor), fill = Condicion)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  
+  # Barra de error
+  geom_errorbar(aes(
+    ymin = ifelse(grepl("ACCU", Medida), Valor * 1000 - Error * 1000, Valor - Error), 
+    ymax = ifelse(grepl("ACCU", Medida), Valor * 1000 + Error * 1000, Valor + Error)), 
+    position = position_dodge(0.7), width = 0.25, size = 0.7) +
+  
+  # Escala del eje izquierdo para RT ampliada a 1200
+  scale_y_continuous(name = "RT (ms)", limits = c(0, 1200), 
+                     sec.axis = sec_axis(~./1000, name = "ACCU", breaks = seq(0, 1.2, 0.2))) +  # Eje ajustado con límite superior 1.2 para ACCU
+  
+  labs(x = "Medida", title = "Incongruentes: Comparación de RT y ACCU entre condiciones A y S") +
+  theme_minimal() +
+  scale_fill_manual(values = c("skyblue", "lightgreen"))
